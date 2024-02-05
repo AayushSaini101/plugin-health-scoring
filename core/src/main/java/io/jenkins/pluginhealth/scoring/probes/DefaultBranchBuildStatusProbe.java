@@ -75,6 +75,7 @@ public class DefaultBranchBuildStatusProbe extends Probe {
         }
 
     }
+
     @Override
     public String key() {
         return KEY;
