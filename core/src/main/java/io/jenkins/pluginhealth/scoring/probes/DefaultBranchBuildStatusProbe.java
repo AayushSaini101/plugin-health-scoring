@@ -25,9 +25,7 @@
 package io.jenkins.pluginhealth.scoring.probes;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.stream.Stream;
+import java.util.Optional;
 
 import io.jenkins.pluginhealth.scoring.model.Plugin;
 import io.jenkins.pluginhealth.scoring.model.ProbeResult;
@@ -35,7 +33,6 @@ import io.jenkins.pluginhealth.scoring.model.ProbeResult;
 import org.kohsuke.github.GHCheckRun;
 import org.kohsuke.github.GHCommit;
 import org.kohsuke.github.GHRepository;
-import org.kohsuke.github.GitHub;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
@@ -43,24 +40,28 @@ import org.springframework.stereotype.Component;
  * This probe checks whether build failed on Default Branch or not.
  */
 @Component
-@Order(FailingBuildProbe.ORDER)
-public class FailingBuildProbe extends Probe {
+@Order(DefaultBranchBuildStatusProbe.ORDER)
+public class DefaultBranchBuildStatusProbe extends Probe {
 
-    public static final int ORDER = LastCommitDateProbe.ORDER + 100;
-    public static final String KEY = "failing-buildingProbe";
+    public static final int ORDER = JenkinsCoreProbe.ORDER + 100;
+    public static final String KEY = "default-branch-build-status";
 
     @Override
     protected ProbeResult doApply(Plugin plugin, ProbeContext context) {
-        if (context.getRepositoryName().isPresent()) {
-            return this.success("There is no local repository for plugin " + plugin.getName() + ".");
+        final io.jenkins.pluginhealth.scoring.model.updatecenter.Plugin ucPlugin =
+            context.getUpdateCenter().plugins().get(plugin.getName());
+        if (ucPlugin == null) {
+            return error("Plugin cannot be found in Update-Center.");
         }
-        try {
-            if (repoContainsJenkins(context).toString().equals("Jenkinsfile found")) {
-
-                final GitHub gh = context.getGitHub();
-                final GHRepository repository = gh.getRepository(context.getRepositoryName().orElseThrow());
-                String defaultBranch = repository.getDefaultBranch();
-                GHCommit commit = repository.getCommit(defaultBranch);
+        final String defaultBranch = ucPlugin.defaultBranch();
+        if (defaultBranch == null || defaultBranch.isBlank()) {
+            return this.error("No default branch configured for the plugin.");
+        }
+        try
+            {
+                final Optional<String> repositoryName = context.getRepositoryName();
+                final GHRepository ghRepository = context.getGitHub().getRepository(repositoryName.get());
+                GHCommit commit = ghRepository.getCommit(defaultBranch);
                 GHCheckRun checkRun = commit.getCheckRuns().iterator().next();
                 GHCheckRun.Conclusion conclusion = checkRun.getConclusion();
 
@@ -69,26 +70,11 @@ public class FailingBuildProbe extends Probe {
                 } else {
                     return this.success("Build is Success in Default Branch");
                 }
-            } else {
-                return this.error("No JenkinsFile found");
-            }
-        } catch (IOException e) {
-            return this.error("Could not get failingBuilding Check");
+            } catch (IOException ex) {
+            throw new RuntimeException(ex);
         }
-    }
 
-    public ProbeResult repoContainsJenkins(ProbeContext context) {
-        final Path repository = context.getScmRepository().get();
-        try (Stream<Path> paths = Files.find(repository, 1, (file, $) ->
-            Files.isReadable(file) && "JenkinsFile".equals(file.getFileName().toString()))) {
-            return paths.findFirst()
-                .map(file -> this.success("Jenkinsfile found"))
-                .orElseGet(() -> this.error("No Jenkinsfile found"));
-        } catch (IOException e) {
-            return this.error(e.getMessage());
-        }
     }
-
     @Override
     public String key() {
         return KEY;
